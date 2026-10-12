@@ -1,0 +1,80 @@
+# robots.txt â boardgamewikia.com (pháº§n cá»§a origin server)
+#
+# LÆ¯U Ã: Cloudflare Äang báº­t "Managed robots.txt" vÃ  CHÃN khá»i cá»§a nÃ³ TRÆ¯á»C
+# ná»i dung file nÃ y (cháº·n GPTBot, CCBot, ClaudeBot, Google-Extended, Bytespider,
+# Amazonbot, Applebot-Extended, meta-externalagent). File nÃ y KHÃNG láº·p láº¡i
+# cÃ¡c bot ÄÃ³. Xem báº£n há»£p nháº¥t tháº­t báº±ng:
+#     curl -s https://boardgamewikia.com/robots.txt
+# (curl -sI tráº£ header cá»§a origin, KHÃNG pháº£n Ã¡nh báº£n há»£p nháº¥t.)
+#
+# ThÃªm route quáº£n trá» / endpoint AJAX má»i thÃ¬ nhá» cáº­p nháº­t file nÃ y.
+#
+# Cá» Ã khÃ´ng cÃ³ dÃ²ng trá»ng bÃªn trong má»t nhÃ³m: spec robots.txt Äá»i 1994 coi
+# dÃ²ng trá»ng lÃ  dáº¥u káº¿t thÃºc record, parser cÅ© sáº½ bá» qua má»i luáº­t náº±m sau nÃ³.
+# DÃ¹ng dÃ²ng chÃº thÃ­ch Äá» phÃ¢n cá»¥m; dÃ²ng trá»ng chá» Äáº·t TRÆ¯á»C má»i User-agent má»i.
+
+User-agent: *
+# --- Khu quáº£n trá» & xÃ¡c thá»±c (Laravel) ---
+Disallow: /system/
+Disallow: /bgadmin/
+Disallow: /admin/
+Disallow: /shop-admin/
+Disallow: /bg-mod/
+Disallow: /password/
+Disallow: /email/
+Disallow: /login
+Disallow: /register
+# --- API & endpoint ná»i bá» (khÃ´ng pháº£i trang) ---
+Disallow: /api/
+Disallow: /csrf-token
+Disallow: /internal/
+Disallow: /push/
+Disallow: /notifications/
+Disallow: /events/filter
+Disallow: /change-language/
+# --- Máº£nh HTML/JSON tráº£ cho AJAX, khÃ´ng pháº£i trang Äá»c láº­p ---
+Disallow: /game-hover/
+Disallow: /vi/game-hover/
+Disallow: /shops/*/follow-status
+Disallow: /users/*/follow-status
+# --- Trang cÃ¡ nhÃ¢n cáº§n ÄÄng nháº­p ---
+Disallow: /me/
+Disallow: /vi/me/
+# --- Shop Admin CMS (Next.js, basePath /s-admin) ---
+# Há» sÆ¡ cÃ´ng khai nay á» /user/{identifier} (rÃºt gá»n tá»« 2026-08-18). Route tháº­t
+# bÃªn Next lÃ  /s-admin/user/... â Nginx Äá»i path trÆ°á»c khi proxy, xem
+# bgw-short-urls.conf.
+# Cá» Ã Äá» index â cÃ³ canonical riÃªng (bgw-shop-admin-main/src/hooks/useProfileSeo.ts).
+# Äá»«ng thÃªm Disallow: /s-admin/ vÃ  cÅ©ng Äá»«ng cháº·n /s-admin/_next/ â há» sÆ¡ cháº¡y
+# báº±ng route dÆ°á»i /s-admin, cháº·n crawl lÃ  máº¥t CSS/JS vÃ  Google render há»ng cáº£ trang.
+# (ÄÆ°á»ng cÅ© /s-admin/user-v2/... ÄÃ£ gá»¡ háº³n á» Äá»£t 24 â khÃ´ng cÃ²n 308 nÃ o á» ÄÃ³.)
+Disallow: /s-admin/dashboard/
+Disallow: /s-admin/auth/
+Disallow: /s-admin/settings/
+Disallow: /s-admin/api/
+Disallow: /user/*/notifications
+# --- WordPress ná»i bá» /blog/ â bÃ i viáº¿t soáº¡n cho admin tá»ng, khÃ´ng Äá» Google Äá»c ---
+# Kiá»m 2026-08-19: site:boardgamewikia.com/blog KHÃNG cÃ³ káº¿t quáº£ nÃ o vÃ 
+# /blog/wp-sitemap.xml tráº£ 404 â chÆ°a tá»«ng bá» index. VÃ¬ chÆ°a cÃ³ gÃ¬ trong index
+# nÃªn cháº·n crawl tháº³ng lÃ  an toÃ n, KHÃNG sá»£ káº¹t "Indexed, though blocked by
+# robots.txt" (báº«y ÄÃ£ trÃ¡nh á» /settings/). Lá»p hai: WP Admin â Settings â
+# Reading â "Discourage search engines" Äá» chÃ¨n meta noindex.
+Disallow: /blog/
+
+# --- Bot SEO/scraper náº·ng (khÃ´ng trÃ¹ng danh sÃ¡ch bot AI cá»§a Cloudflare) ---
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: SemrushBot
+Disallow: /
+
+User-agent: MJ12bot
+Disallow: /
+
+User-agent: DotBot
+Disallow: /
+
+User-agent: PetalBot
+Disallow: /
+
+Sitemap: https://boardgamewikia.com/sitemap/index.xml
