@@ -1,0 +1,230 @@
+= Cvičenie 2 =
+
+Zdroj dát: [https://boardgamewikia.com boardgamewikia.com] – wiki o stolových hrách (hry, vydavatelia, autori, ilustrátori, mechaniky, kategórie, obchody).
+
+== Frameworky ==
+
+Crawler je napísaný v čistom Pythone. Používa iba knižnicu <code>requests</code>, modul <code>re</code> a štandardnú knižnicu, v súlade s pravidlami predmetu.
+
+{| class="wikitable"
+! Technológia !! Na čo sa používa
+|-
+| '''Python 3.12''' || celý projekt
+|-
+| '''requests 2.34''' || sťahovanie stránok (<code>requests.Session</code> – jedno TCP spojenie cez keep-alive)
+|-
+| '''re''' || extrakcia odkazov z HTML, čítanie <code>&lt;loc&gt;</code> zo sitemap XML, pravidlá z robots.txt (wildcard <code>*</code> a <code>$</code>)
+|-
+| '''štandardná knižnica''' || <code>urllib.parse</code> (skladanie a rozklad URL), <code>html</code> (dekódovanie <code>&amp;amp;</code>), <code>hashlib</code> (skracovanie dlhých názvov súborov), <code>collections.deque</code> (fronta URL)
+|-
+| '''TSV súbory''' || ukladanie stavu crawlera (<code>links/all_urls.tsv</code>, <code>links/crawled_urls.tsv</code>)
+|}
+
+'''Zámerne nepoužívame:''' BeautifulSoup, lxml ani Scrapy (HTML aj XML parsujeme cez <code>re</code>), SQL databázy (stav je v TSV), pandas a NLTK.
+
+'''Plánované pre ďalšie fázy:'''
+* parsovanie uložených stránok – Python + <code>re</code>
+* indexovanie – PyLucene (docker image)
+* distribuované spracovanie – Apache Spark (PySpark)
+
+== Diagram architektúry crawl systému ==
+
+image
+
+Fronta sa nikde samostatne neukladá. Pri štarte sa vypočíta ako „všetky známe URL mínus už crawlnuté“. Obidva súbory sa zapisujú hneď po každej stránke, takže crawler na ďalšie spustenie pokračuje tam, kde skončil.
+
+== Aké hlavičky používate, aký timeout/sleep? ==
+
+=== HTTP hlavičky ===
+
+{| class="wikitable"
+! Hlavička !! Hodnota !! Odkiaľ
+|-
+| <code>User-Agent</code> || <code>VinfProjectBot/1.0 (Contact: xkemenya@stuba.sk)</code> || nastavené v <code>HEADERS</code>; bot sa identifikuje a uvádza kontakt
+|-
+| <code>Accept</code> || <code>*/*</code> || predvolené v requests
+|-
+| <code>Accept-Encoding</code> || <code>gzip, deflate</code> || predvolené v requests (menej prenesených dát)
+|-
+| <code>Connection</code> || <code>keep-alive</code> || predvolené v requests; <code>Session</code> používa to isté spojenie pre všetky požiadavky
+|}
+
+=== Timeout, sleep a opakovanie ===
+
+{| class="wikitable"
+! Nastavenie !! Hodnota !! Poznámka
+|-
+| <code>REQUEST_TIMEOUT</code> || 30 s || maximálny čas na jednu požiadavku
+|-
+| <code>CRAWL_DELAY</code> || 1 s || pauza po každej požiadavke (stránky, robots.txt aj sitemapy); robots.txt nedefinuje <code>Crawl-delay</code>
+|-
+| <code>MAX_RETRIES</code> || 3 pokusy || pri sieťovej chybe alebo HTTP 429, 500, 502, 503, 504; medzi pokusmi čaká 5 s a potom 10 s
+|-
+| neúspešná URL || – || nezapíše sa ako crawlnutá, takže ostane vo fronte na ďalšie spustenie
+|-
+| 404 a iné chyby || – || zapíšu sa do <code>crawled_urls.tsv</code> so statusom a znova sa neskúšajú
+|}
+
+
+=== robots.txt ===
+
+Crawler si pri štarte stiahne <code>robots.txt</code> a pred každou URL kontroluje pravidlá skupiny <code>User-agent: *</code>. Vlastný parser podporuje <code>Allow</code>, <code>Disallow</code> a wildcardy <code>*</code> a <code>$</code>, pričom vyhráva najdlhšie zhodné pravidlo. Zakázané sú napr. <code>/login</code>, <code>/api/</code>, <code>/admin/</code>, <code>/change-language/</code>, <code>/blog/</code>, <code>/shops/*/follow-status</code>.
+
+Keďže URL ukladáme bez koncového <code>/</code>, kontroluje sa aj variant s lomkou. Inak by pravidlo <code>Disallow: /blog/</code> nezablokovalo URL <code>/blog</code>.
+
+== Implementácia crawlera ==
+
+=== Postup ===
+
+# Načíta stav z <code>links/all_urls.tsv</code> a <code>links/crawled_urls.tsv</code>; fronta = all_urls − crawled_urls.
+# Stiahne <code>robots.txt</code>.
+# Načíta sitemap <code>/sitemap/index.xml</code>. Je to sitemap index, takže rekurzívne prejde podsitemapy <code>shops.xml</code>, <code>broad_games-1.xml</code> a <code>home.xml</code> (spolu 3 723 URL). Nové URL pridá do fronty.
+# Postupne berie URL z fronty:
+#* skontroluje, či sa smie crawlovať,
+#* stiahne ju a uloží do <code>saved_pages/</code>,
+#* vytiahne z nej odkazy a do <code>all_urls.tsv</code> aj do fronty pridá len tie, ktoré tam ešte nie sú,
+#* zapíše URL do <code>crawled_urls.tsv</code>,
+#* počká 1 s.
+
+=== Hlavné časti kódu (main.py) ===
+
+{| class="wikitable"
+! Funkcia / trieda !! Čo robí
+|-
+| <code>normalize_url</code> || z <code>href</code> spraví absolútnu URL: dekóduje <code>&amp;amp;</code>, zahodí <code>#fragment</code>, zmenší písmená v doméne, odstráni koncové <code>/</code>
+|-
+| <code>is_crawlable</code> || len doména boardgamewikia.com, nie súbory (<code>.css</code>, <code>.js</code>, obrázky…), nie <code>/vi/</code>, povolené v robots.txt
+|-
+| <code>RobotsRules</code>, <code>load_robots</code> || parser robots.txt
+|-
+| <code>fetch</code> || GET s timeoutom a opakovaním pri dočasných chybách
+|-
+| <code>get_sitemap_urls</code> || číta sitemap, sitemap index rekurzívne
+|-
+| <code>extract_links</code> || regex na <code>&lt;a href&gt;</code>; najprv odstráni <code>&lt;script&gt;</code> a HTML komentáre
+|-
+| <code>UrlStore</code> || známe URL, crawlnuté URL a fronta; okamžite zapisuje do TSV
+|-
+| <code>save_page</code>, <code>url_to_filename</code> || uloženie stránky do súboru
+|-
+| <code>crawl_page</code> || spracovanie jednej stránky (presmerovanie, status, uloženie, odkazy)
+|-
+| <code>crawl</code> || hlavný cyklus, zachytenie Ctrl+C
+|}
+
+Všetky nastavenia (doména, štartovacie URL, hlavičky, delay, timeout, vylúčené cesty, max. počet stránok na jeden beh) sú v sekcii ''Configuration'' na začiatku súboru.
+
+=== Extrakcia odkazov ===
+
+<syntaxhighlight lang="python">
+# <a ... href="..."> or <a ... href='...'>
+LINK_PATTERN = re.compile(
+    r"""<a\b[^>]*?\shref\s*=\s*(?:"([^"]*)"|'([^']*)')""",
+    re.IGNORECASE,
+)
+
+# <script>...</script> and <!-- ... --> may contain <a href> templates
+# (e.g. href="${linkHref}") that are not real links
+SCRIPT_OR_COMMENT_PATTERN = re.compile(
+    r"<script\b.*?</script>|<!--.*?-->",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def extract_links(page_html, page_url):
+  """Return the normalized URLs of all <a href> links on the page."""
+  page_html = SCRIPT_OR_COMMENT_PATTERN.sub("", page_html)
+  links = []
+  for double_quoted, single_quoted in LINK_PATTERN.findall(page_html):
+    url = normalize_url(double_quoted or single_quoted, page_url)
+    if url:
+      links.append(url)
+  return links
+</syntaxhighlight>
+
+=== Problémy, na ktoré sme narazili ===
+
+* '''Duplicitné URL:''' <code>/ark-nova/</code> aj <code>/ark-nova</code> vracajú 200 bez presmerovania (canonical je s lomkou). Preto sa pri normalizácii odstraňuje koncové <code>/</code>.
+* '''Kódovanie:''' robots.txt a sitemapy prichádzajú bez <code>charset</code> a requests ich vtedy dekóduje ako ISO-8859-1, čím sa rozbijú vietnamské znaky. Text sa preto dekóduje ako UTF-8 a stránky sa ukladajú ako surové bajty (<code>response.content</code>).
+* '''Falošné odkazy z JavaScriptu:''' v <code>&lt;script&gt;</code> sú HTML šablóny s <code>href="${linkHref...}"</code>. Skripty sa preto pred extrakciou odstránia.
+* '''Vietnamská kópia webu''' (<code>/vi/...</code>) duplikuje anglický obsah, preto je vylúčená cez <code>EXCLUDED_PATH_PATTERNS</code>.
+
+=== Formát uložených dát ===
+
+<code>links/all_urls.tsv</code> – všetky známe URL (crawlnuté aj čakajúce):
+<pre>
+url
+https://boardgamewikia.com/gloomhaven
+https://boardgamewikia.com/mechanisms/action-queue
+https://boardgamewikia.com/boardgameartist/alexandr-elichev
+https://boardgamewikia.com/boardgamepublisher/cephalofair-games
+</pre>
+
+<code>links/crawled_urls.tsv</code> – spracované URL, HTTP status, názov súboru a čas:
+<pre>
+url	status	file	crawled_at
+https://boardgamewikia.com/shops/boardgame-era	200	boardgamewikia.com_shops_boardgame-era.html	2026-10-12 08:28:50
+https://boardgamewikia.com/gloomhaven	200	boardgamewikia.com_gloomhaven.html	2026-10-12 09:18:52
+https://boardgamewikia.com/wingspan	200	boardgamewikia.com_wingspan.html	2026-10-12 09:19:32
+https://boardgamewikia.com/zombicide	200	boardgamewikia.com_zombicide.html	2026-10-12 13:01:45
+</pre>
+
+<code>saved_pages/</code> – jedna stránka = jeden HTML súbor, názov je odvodený z URL (<code>https://boardgamewikia.com/gloomhaven</code> → <code>boardgamewikia.com_gloomhaven.html</code>).
+
+== Ukážka stiahnutých stránok ==
+
+=== Stav crawlu (12. 10. 2026, 13:21) ===
+
+{| class="wikitable"
+! Metrika !! Hodnota
+|-
+| URL zo sitemapy || 3 723 (z toho 106 vietnamských <code>/vi/shops/...</code> vylúčených)
+|-
+| známe URL (<code>all_urls.tsv</code>) || 7 669
+|-
+| crawlnuté stránky || 1 082 (všetky HTTP 200)
+|-
+| veľkosť <code>saved_pages/</code> || 293 MB (priemerne ~ 277 KB na stránku, 140 – 964 KB)
+|}
+
+Odkazy zo stránok viac ako zdvojnásobili počet URL oproti sitemape. Sitemap obsahuje hry, obchody a hlavné stránky, ale nie stránky autorov, ilustrátorov, vydavateľov a mechaník.
+
+{| class="wikitable"
+! Typ stránky (cesta) !! Počet známych URL
+|-
+| <code>/&lt;slug&gt;</code> – hry a hlavné stránky || 3 554
+|-
+| <code>/boardgameartist/</code> – ilustrátori || 1 480
+|-
+| <code>/boardgamepublisher/</code> – vydavatelia || 1 413
+|-
+| <code>/boardgamedesigner/</code> – autori || 739
+|-
+| <code>/mechanisms/</code> – herné mechaniky || 188
+|-
+| <code>/shops/</code> – obchody a herne || 116
+|-
+| <code>/category/</code> – kategórie || 75
+|-
+| <code>/boardgame/</code> || 73
+|-
+| ostatné (<code>/subdomain/</code>, <code>/boardgameexpansion/</code>, <code>/collection/</code>, …) || 31
+|-
+! Spolu !! 7 669
+|}
+
+=== Príklady stiahnutých stránok ===
+
+{| class="wikitable"
+! URL !! Súbor !! Veľkosť !! <code>&lt;title&gt;</code>
+|-
+| https://boardgamewikia.com/ || <code>boardgamewikia.com_.html</code> || 524 KB || Board Game Wikia - Homepage
+|-
+| https://boardgamewikia.com/gloomhaven || <code>boardgamewikia.com_gloomhaven.html</code> || 308 KB || Gloomhaven (2017) - Boardgamewikia
+|-
+| https://boardgamewikia.com/wingspan || <code>boardgamewikia.com_wingspan.html</code> || 328 KB || Which Shops Have Wingspan to Play Near My Location?
+|-
+| https://boardgamewikia.com/zombicide || <code>boardgamewikia.com_zombicide.html</code> || 268 KB || Zombicide (2012) - Board Game Wikia
+|-
+| https://boardgamewikia.com/shops/boardgame-era || <code>boardgamewikia.com_shops_boardgame-era.html</code> || 424 KB || Everything about Boardgame Era Coffee Shop - Board Game Wikia
+|}
