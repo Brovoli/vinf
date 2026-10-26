@@ -6,7 +6,8 @@ TF-IDF index and command-line search over the extracted games (extracted/games.t
   python indexer.py search horror dice OR zombie   (horror AND dice) OR zombie
   python indexer.py search                         interactive mode
 
-Matching games are ranked by cosine similarity of TF-IDF vectors, two tf variants:
+Matching games are ranked by the sum of the query terms' TF-IDF weights in the game,
+two tf variants:
   classic  w = tf * idf
   double   w = (K + (1 - K) * tf / max_tf) * idf    (double normalization, K = 0.5)
 tf = count of the term in the game, max_tf = count of the game's most frequent term,
@@ -30,8 +31,7 @@ INDEX_DIR = os.path.join(BASE_DIR, "index")
 DOCUMENTS_FILE = os.path.join(INDEX_DIR, "documents.tsv")
 TERMS_FILE = os.path.join(INDEX_DIR, "terms.tsv")
 
-# Searchable columns of games.tsv. Artists and publishers are left out:
-# up to 100 names per game would outweigh the description in the vectors.
+# Searchable columns of games.tsv. Artists and publishers are left out
 INDEXED_COLUMNS = [
     "name", "summary", "designers", "categories", "mechanisms", "types",
     "description", "how_to_play",
@@ -44,10 +44,7 @@ SCHEMES = {
 }
 TOP_RESULTS = 10
 
-DOCUMENT_COLUMNS = [
-    "doc_id", "slug", "name", "year", "url", "length", "max_tf",
-    "norm_classic", "norm_double",
-]
+DOCUMENT_COLUMNS = ["doc_id", "slug", "name", "year", "url", "length", "max_tf"]
 
 # "i" is not a stopword: "World War I"
 STOPWORDS = set("""
@@ -137,16 +134,7 @@ def build_index():
         "url": game["url"],
         "length": sum(counts.values()),
         "max_tf": max(counts.values(), default=1),
-        "counts": counts,
     })
-
-  # Vector length of every game (cosine denominator), one per scheme
-  idfs = {term: idf(len(docs), len(documents)) for term, docs in postings.items()}
-  for doc in documents:
-    for scheme in SCHEMES:
-      doc[f"norm_{scheme}"] = round(math.sqrt(sum(
-          (tf_weight(scheme, tf, doc["max_tf"]) * idfs[term]) ** 2
-          for term, tf in doc["counts"].items())), 6)
 
   # terms.tsv row: "zombie  45  90:6|176:1|..." (doc_id:tf pairs)
   terms = [
@@ -177,8 +165,6 @@ class Index:
     self.documents = read_tsv(DOCUMENTS_FILE)
     for doc in self.documents:
       doc["max_tf"] = int(doc["max_tf"])
-      for scheme in SCHEMES:
-        doc[f"norm_{scheme}"] = float(doc[f"norm_{scheme}"])
 
     # term -> "df<TAB>postings", split later
     with open(TERMS_FILE, encoding="utf-8") as f:
@@ -202,30 +188,23 @@ class Index:
 
 
 def search(index, groups, scheme):
-  """Games with all terms of at least one group, best cosine score first.
+  """Games with all terms of at least one group, highest score first.
+  score = sum of tf_weight * idf of the query terms in the game.
   Returns [(score, document)]."""
-  query_tf = Counter(term for group in groups for term in group)
-  postings = {term: index.postings(term) for term in query_tf}
+  terms = set(term for group in groups for term in group)
+  postings = {term: index.postings(term) for term in terms}
 
   matches = set()
   for group in groups:
     matches |= set.intersection(*(set(postings[term]) for term in group))  # AND
 
-  max_query_tf = max(query_tf.values())
-  query_weights = {
-      term: tf_weight(scheme, tf, max_query_tf) * index.idf(term)
-      for term, tf in query_tf.items()
-  }
-  query_norm = math.sqrt(sum(weight ** 2 for weight in query_weights.values()))
-
   results = []
   for doc_id in matches:
     doc = index.documents[doc_id]
-    dot = sum(
-        weight * tf_weight(scheme, postings[term][doc_id], doc["max_tf"]) * index.idf(term)
-        for term, weight in query_weights.items() if doc_id in postings[term])
-    norm = query_norm * doc[f"norm_{scheme}"]
-    results.append((dot / norm if norm else 0.0, doc))
+    score = sum(
+        tf_weight(scheme, postings[term][doc_id], doc["max_tf"]) * index.idf(term)
+        for term in terms if doc_id in postings[term])
+    results.append((score, doc))
 
   results.sort(key=lambda result: (-result[0], result[1]["name"]))
   return results

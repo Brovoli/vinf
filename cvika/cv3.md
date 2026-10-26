@@ -1,18 +1,10 @@
-====== Konzultácia 3 ======
+====== Odovzdanie 1 ======
 
-Opis projektu a dvojice otázok a odpovedí sú v **Konzultácii 1**. Frameworky crawlera, diagram architektúry, metadáta crawlovania (''crawled_urls.tsv'') a zdôvodnenie hlavičiek, timeoutov a sleepov sú v **Konzultácii 2**. Tu je len to, čo pribudlo: dokončený crawl, extrakcia, indexer a TF-IDF.
-
-Celý postup:
-
-^ Krok ^ Skript ^ Vstup ^ Výstup ^ Čas ^
-| 1. crawlovanie | ''main.py'' | boardgamewikia.com | ''saved_pages/'' (15 334 HTML), ''links/*.tsv'' | 12. – 20. 10. 2026 |
-| 2. extrakcia | ''extractor.py'' | ''saved_pages/'' | ''extracted/*.tsv'' (7 tabuliek) | 12 s |
-| 3. index | ''indexer.py build'' | ''extracted/games.tsv'' | ''index/documents.tsv'', ''index/terms.tsv'' | 1 s |
-| 4. vyhľadávanie | ''indexer.py search'' | dopyt | zoradené hry | 65 ms |
+Ako rámcovú tému som si vybral spoločenské hry. Používatel by mal mať možnosť vyhladať hry podla názvu, popisu, dizajnéra alebo vlastností hry (strategické, katrové, party etc.). Indexer by mal nájsť relevantné výsledky na základe vyhladávaných slov.
 
 ===== Scrapovaná stránka a extrahované dáta =====
 
-Zdroj: [[https://boardgamewikia.com|boardgamewikia.com]]. Extraktor určí typ stránky podľa URL a overí ho podľa obsahu. Každý typ stránky má vlastné regexy a vlastnú tabuľku:
+Zdroj: [[https://boardgamewikia.com|boardgamewikia.com]]. Stránka je pôvodom z vietnamu takže je potrebné nastaviť utf-8 kódovanie pre niektoré stránky. V Extraktor určí typ stránky podľa URL a overí ho podľa obsahu. Každý typ stránky má vlastné regexy a vlastnú tabuľku:
 
 ^ Typ stránky ^ URL ^ Výstup ^ Riadkov ^
 | hra | ''/<slug>'' | ''games.tsv'' | 3 659 |
@@ -39,11 +31,25 @@ Entity (''designers.tsv'', ''mechanisms.tsv''):
 
 Ďalšie stĺpce ''games.tsv'': ''summary'', ''rank'', ''bgg_id'', ''artists'', ''publishers'', ''mechanisms'', ''types'', ''related_games'', ''description'', ''how_to_play'' (spolu 26 stĺpcov).
 
-===== Nové knižnice =====
 
-Doplnenie ku Konzultácii 2. Stále len štandardná knižnica Pythonu, bez pandas, NLTK a SQL.
+^ Krok ^ Skript ^ Vstup ^ Výstup ^ Čas ^
+| 1. crawlovanie | ''main.py'' | boardgamewikia.com | ''saved_pages/'' (15 334 HTML), ''links/*.tsv'' | 12. – 20. 10. 2026 |
+| 2. extrakcia | ''extractor.py'' | ''saved_pages/'' | ''extracted/*.tsv'' (7 tabuliek) | 12 s |
+| 3. index | ''indexer.py build'' | ''extracted/games.tsv'' | ''index/documents.tsv'', ''index/terms.tsv'' | 1 s |
+| 4. vyhľadávanie | ''indexer.py search'' | dopyt | zoradené hry | 65 ms |
+
+===== Queries a odpovede systému =====
+
+  * Brass Birmingham spoločenskú hru -> systém vráti informácie o hre Brass birmingham
+  * Aké expanzie na hru Wingspan existujú -> systém vráti IBA zoznam expanzii na hru Wingspan (Wingspan: European Expansion eg.)
+  * Nájdi mi hry od dizajnéra Reiner Knizia -> Zoznam hier ktoré dizajnoval/spoludizajnoval Reiner Knizia (Ra)
+  * Nájdi mi miniatúrové hry s horrorovou tematikou -> Zoznam horrorových kartových hier (Horrified)
+  * Nájdi mi kartové hry hry s tematikou 2. svetovej vojny aleb hry z Warhammer 40k -> Spojený zoznam kartových hier z 2. sv a Warhammer (Undatunted & Warhammer 40k spacemarine)
+
+===== Knižnice =====
 
 ^ Modul ^ Kde ^ Prečo ^
+| ''requests'' | sťahovanie stránok (''requests.Session'') | jednoduché HTTP, jedno spojenie pre všetky požiadavky |
 | ''re'' | extraktor, indexer | celá extrakcia z HTML a tokenizácia |
 | ''html'' | extraktor | dekódovanie entít (''&#039;'' → apostrof) |
 | ''unicodedata'' | indexer | odstránenie diakritiky (''Jožin'' → ''jozin'') |
@@ -51,7 +57,26 @@ Doplnenie ku Konzultácii 2. Stále len štandardná knižnica Pythonu, bez pand
 | ''argparse'' | indexer | príkazový riadok (''build'', ''search'') |
 | ''unittest'' | testy | testy regexov |
 
-Index je **vlastný** (pravidlá to povoľujú). Plán z Konzultácie 2 s PyLucene sme zmenili, pretože potrebujeme dve vlastné schémy váženia TF-IDF.
+===== 7. Hlavičky, timeouty, sleep =====
+
+^ Nastavenie ^ Hodnota ^ Prečo ^
+| ''User-Agent'' | ''VinfProjectBot/1.0 (Contact: xkemenya@stuba.sk)'' | bot sa identifikuje, správca vie, komu napísať |
+| ''Accept-Encoding'' | ''gzip, deflate'' | menej prenesených dát (stránka má priemerne 150 KB) |
+| ''Connection'' | ''keep-alive'' (''requests.Session'') | jedno TCP spojenie, menšia záťaž servera |
+| timeout | 30 s | zaseknuté spojenie nezastaví crawler |
+| sleep | 1 s po každej požiadavke | robots.txt nemá ''Crawl-delay'', 1 požiadavka za sekundu nezaťaží malú stránku |
+| opakovanie | 3 pokusy, pauza 5 s a 10 s | len pri dočasných chybách (sieť, 429, 5xx) |
+| robots.txt | dodržiava sa | zakázané sú napr. ''/login'', ''/api/'', ''/blog/'' |
+
+===== Architektúra Crawleru =====
+
+^ Krok ^ Skript ^ Vstup ^ Výstup ^ Čas ^
+| 1. crawlovanie | ''main.py'' | boardgamewikia.com | ''saved_pages/'' (15 334 HTML), ''links/*.tsv'' | 12. – 20. 10. 2026 |
+| 2. extrakcia | ''extractor.py'' | ''saved_pages/'' | ''extracted/*.tsv'' (7 tabuliek) | 12 s |
+| 3. index | ''indexer.py build'' | ''extracted/games.tsv'' | ''index/documents.tsv'', ''index/terms.tsv'' | 1 s |
+| 4. vyhľadávanie | ''indexer.py search'' | dopyt | zoradené hry | 65 ms |
+
+{{:user:adam_kemeny:diagram.png?400|}}
 
 ===== Extrakcia URL z HTML =====
 
@@ -138,14 +163,6 @@ def extract_game(page, slug):
   ...
 </code>
 
-Zaujímavosti pri extrakcii:
-
-^ Problém ^ Riešenie ^
-| Eventy a obchody sú na stránke hry | sú v samostatnej záložke ''play_now'', ktorú extraktor nečíta |
-| „Suggested Games“ sú náhodné (prekryv mechaník 0,07, náhodné hry 0,06) | berieme len „Related Games“ (prekryv 0,27) |
-| Rozšírenie neodkazuje na základnú hru | odhad podľa prefixu slugu/názvu, prednosť má spoločný autor: 464 zo 478 rozšírení |
-| Typy (''/subdomain/'') majú v ''<h1>'' len slug (''party-games'') | názov sa berie z odkazov na stránkach hier (''Party Games'') |
-| Poradie na stránkach hier je z rôznych dní crawlu | poradie, hodnotenie a hlasujúci sa berú z rebríčka (jeden snímok) |
 
 ===== Indexer a index =====
 
@@ -207,98 +224,91 @@ def idf(df, num_documents):
 
 idf termov z porovnávaných dopytov:
 
-^ term ^ df ^ idf ^
-| game | 3 621 | 0,010 |
-| dice | 881 | 1,424 |
-| world | 680 | 1,683 |
-| cooperative | 609 | 1,793 |
-| i | 257 | 2,656 |
-| war | 244 | 2,708 |
-| horror | 205 | 2,882 |
-| reiner | 71 | 3,942 |
-| knizia | 63 | 4,062 |
-| zombie | 45 | 4,398 |
+^ term ^ world ^ war ^ i ^ reiner ^ knizia ^ horror ^ dice ^ zombie ^
+| df | 680 | 244 | 257 | 71 | 63 | 205 | 881 | 45 |
+| idf | 1,68 | 2,71 | 2,66 | 3,94 | 4,06 | 2,88 | 1,42 | 4,40 |
 
 ===== Porovnanie metód na dopytoch =====
 
-Obe metódy dostanú tú istú množinu hier (AND/OR filter), líšia sa len poradím.
+Obe metódy vrátia tie isté hry, líšia sa poradím.
 
-==== 1. „world war I“ – 18 hier ====
-
-^ # ^ klasické TF-IDF ^ skóre ^ double normalization ^ skóre ^
-| 1 | Twilight Struggle | 0,205 | Risk | 0,145 |
-| 2 | Star Wars: Rebellion | 0,174 | Aeon's End: War Eternal | 0,131 |
-| 3 | Aeon's End: War Eternal | 0,173 | **The Grizzled** | 0,125 |
-| 4 | War of the Ring: Second Edition | 0,170 | **History of the World** | 0,121 |
-| 5 | Undaunted: Stalingrad | 0,154 | Sniper Elite: The Board Game | 0,119 |
-
-Double normalization dostane obe hry z kategórie World War I do top 4. Klasické TF-IDF uprednostní dlhé popisy, kde sa často opakuje „war“.
-
-==== 2. „Reiner Knizia“ – 63 hier ====
+==== „world war I“ (18 hier) ====
 
 ^ # ^ klasické TF-IDF ^ skóre ^ double normalization ^ skóre ^
-| 1 | Medici | 0,331 | Ninja Master | 0,290 |
-| 2 | MEOW | 0,319 | Piñatas | 0,273 |
-| 3 | High Society | 0,317 | MEOW | 0,266 |
-| 4 | Piñatas | 0,301 | The Quest for El Dorado: The Golden Temples | 0,238 |
-| 5 | Rebirth | 0,285 | Medici | 0,230 |
+| 1 | Twilight Struggle | 70,49 | Undaunted: Stalingrad | 5,21 |
+| 2 | Star Wars: Rebellion | 63,81 | Undaunted: Normandy | 4,95 |
+| 3 | War of the Ring: Second Edition | 42,20 | Undaunted: Battle of Britain | 4,74 |
+| 4 | Churchill | 30,24 | Star Wars: Rebellion | 4,62 |
+| 5 | Root | 25,69 | History of the World | 4,53 |
 
-Klasické TF-IDF dáva vyššie hry, ktoré meno Knizia spomínajú v popise viackrát. Double normalization dáva vyššie hry s krátkym popisom.
+Klasické uprednostní dlhé texty s častým „war“ (Twilight Struggle 19×). Double uprednostní krátke popisy, a tak je History of the World (hra o 1. svetovej vojne) 5., pri klasickom až 10.
 
-==== 3. „horror dice OR zombie“ – 113 hier ====
+==== „Reiner Knizia“ (63 hier) ====
 
 ^ # ^ klasické TF-IDF ^ skóre ^ double normalization ^ skóre ^
-| 1 | Tiny Epic Zombies | 0,670 | After the Virus | 0,257 |
-| 2 | Last Night on Earth: The Zombie Game | 0,610 | Selfish: Zombie Edition | 0,255 |
-| 3 | Zombicide | 0,597 | Zombicide | 0,251 |
-| 4 | Zombie in My Pocket | 0,552 | Zombie Kittens | 0,238 |
-| 5 | After the Virus | 0,525 | Flick 'em Up!: Dead of Winter | 0,223 |
+| 1 | Botswana | 24,01 | High Society | 6,00 |
+| 2 | Tigris & Euphrates | 24,01 | Pick-omino | 6,00 |
+| 3 | Battle Line: Chiến Thần Vũ Trụ | 20,07 | The Quest for El Dorado | 6,00 |
+| 4 | Lost Cities: The Board Game | 20,07 | Tigris & Euphrates | 6,00 |
+| 5 | Rebirth | 20,07 | Rebirth | 5,67 |
 
-Pri klasickom TF-IDF rozhoduje počet výskytov slova „zombie“ (skóre až 0,67). Pri double normalization sú skóre nižšie a bližšie pri sebe, takže vyššie sa dostanú aj kratšie popisy.
+Klasické uprednostní hry, kde je meno v popise 3×. Pri double majú 4 hry rovnaké skóre (oba termy majú tf / max_tf = 1/2), poradie medzi nimi určí abeceda.
+
+==== „horror dice OR zombie“ (113 hier) ====
+
+^ # ^ klasické TF-IDF ^ skóre ^ double normalization ^ skóre ^
+| 1 | Tiny Epic Zombies | 123,06 | Mall of Horror | 7,18 |
+| 2 | Zombie in My Pocket | 55,66 | Run Fight or Die: Reloaded | 7,06 |
+| 3 | Last Night on Earth: The Zombie Game | 51,08 | Hit Z Road | 6,96 |
+| 4 | Zombicide: Gear Up | 48,38 | Zombicide: 2nd Edition | 6,91 |
+| 5 | Zombie Princess | 46,86 | Last Night on Earth: The Zombie Game | 6,91 |
+
+Pri klasickom rozhoduje jedno opakované slovo (Tiny Epic Zombies: „zombie“ 27×). Pri double vyhrajú hry, ktoré obsahujú všetky tri slová.
 
 ==== Zhrnutie ====
 
 ^ ^ klasické TF-IDF ^ double normalization ^
-| čo odmeňuje | časté opakovanie termu | prítomnosť termu, krátke texty |
-| rozsah skóre (top 5) | širší (0,15 – 0,67) | užší (0,12 – 0,29) |
-| vhodné pre | fulltext („o čom hra je“) | metadáta (kategória, autor) |
+| rozhoduje | počet výskytov termu | prítomnosť termu |
+| dlhé texty | majú výhodu | nemajú výhodu |
+| skóre v top 5 | 20 – 123 | 4,5 – 7,2 |
 
 ===== Štatistika crawlu =====
 
-Crawl je dokončený. Prešlo sa 15 939 URL: 15 334 × HTTP 200, 309 × 404, 296 × 302.
+Spolu 15 939 URL: 15 334 × HTTP 200, 309 × 404, 296 × 302.
 
-^ Typ stránky ^ Stránok ^ Veľkosť ^ Relevantné ^
-| hry (''/<slug>'') | 3 673 | 998 MB | áno, 3 659 hier (14 sú statické stránky) |
-| ilustrátori | 3 422 | 335 MB | áno |
-| vydavatelia | 3 320 | 358 MB | áno |
-| autori | 2 200 | 219 MB | áno |
-| mechaniky | 831 | 120 MB | áno |
-| kategórie | 470 | 70 MB | áno |
-| typy (''/subdomain/'') | 123 | 19 MB | áno |
-| rebríček (všetky hry) | 184 | 23 MB | áno |
-| rebríček podľa typu | 358 | 45 MB | nie (duplikát) |
-| vyhľadávanie, populárne, najlepšie… | 515 | 79 MB | nie (zoznamy hier bez nových údajov) |
-| obchody | 166 | 62 MB | nie |
-| eventy | 33 | 18 MB | nie |
-| používatelia, ostatné | 39 | 7 MB | nie |
+^ Typ stránky ^ Stránok ^ Na disku ^ Relevantné ^
+| hry | 3 659 | 995 MB | áno |
+| autori, ilustrátori, vydavatelia | 8 942 | 912 MB | áno |
+| kategórie, mechaniky, typy | 1 424 | 208 MB | áno |
+| rebríček | 184 | 23 MB | áno |
+| ostatné (vyhľadávanie, rebríčky podľa typu, obchody, eventy, používatelia, statické stránky) | 1 125 | 213 MB | nie |
 | **spolu** | **15 334** | **2,35 GB** | **14 209 (93 %)** |
 
 ^ Dáta ^ Veľkosť ^
-| ''saved_pages/'' (surové HTML) | 2,35 GB |
-| ''extracted/'' (7 TSV tabuliek) | 10,6 MB |
-| ''index/'' | 3,1 MB |
+| HTML (''saved_pages/'') | 2,35 GB |
+| extrahované TSV (''extracted/'') | 10,6 MB |
+| index (''index/'') | 3,0 MB |
 
 ==== BONUS: počet tokenov ====
 
 ^ Text ^ Tokenov ^ Rôznych termov ^
-| celý ''games.tsv'' (všetky stĺpce) | 1 395 356 | – |
-| indexované stĺpce (pred spracovaním) | 905 586 | 28 275 |
-| po odstránení stopslov a stemmingu (index) | 544 759 | 24 508 |
-| priemer na hru | 149 | – |
+| celý ''games.tsv'' | 1 395 356 | – |
+| indexované stĺpce pred spracovaním | 905 586 | 28 275 |
+| v indexe (bez stopslov, po stemmingu) | 544 759 | 24 508 |
+| priemer na hru v indexe | 149 | – |
+
+===== ZIP s kódom =====
+
+{{ :user:adam_kemeny:adam_kemeny_vinf1.zip |zip link}} (''main.py'', ''extractor.py'', ''indexer.py'', ''tests/test_regex.py'', ''requirements.txt'')
 
 ===== BONUS: unit testy regexov =====
 
-[[https://github.com/Brovoli/vinf/blob/main/tests/test_regex.py|tests/test_regex.py]] obsahuje 23 testov. Testujú odkazy a robots.txt v crawleri, každý typ stránky v extraktore (na HTML úryvkoch z reálnych stránok) a tokenizér indexera.
+[[https://github.com/Brovoli/vinf/blob/main/tests/test_regex.py|tests/test_regex.py]]: 23 testov na HTML úryvkoch z reálnych stránok.
+
+^ Časť ^ Čo testy overujú ^
+| crawler | odkazy z ''<a href>'', ignorovanie ''<script>'', robots.txt |
+| extraktor | typ stránky podľa URL, hra, autor, rebríček, čistenie textu |
+| indexer | tokenizácia, diakritika, množné číslo, AND/OR |
 
 <code>
 $ python -m unittest discover tests
@@ -306,7 +316,3 @@ $ python -m unittest discover tests
 Ran 23 tests in 0.001s
 OK
 </code>
-
-===== Kód =====
-
-ZIP: ''cv3_kod.zip'' (''main.py'', ''extractor.py'', ''indexer.py'', ''tests/test_regex.py'', ''requirements.txt'').
